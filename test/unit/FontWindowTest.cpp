@@ -132,8 +132,12 @@ TEST(FontSetSlots, BaseNotLoadedIsInvalid) {
   set.reset_slots(b.count, b.nominal);
   set.set_slot(4, &b.fonts[4]);
   set.set_base_size_index(2);
-  EXPECT_FALSE(set.valid());
+  EXPECT_FALSE(set.valid()) << "size 2 isn't loaded: still on the empty size 0";
   set.set_base_size_index(4);
+  EXPECT_TRUE(set.valid());
+  // Asking for a size that isn't loaded keeps the one in use.
+  set.set_base_size_index(1);
+  EXPECT_EQ(set.base_size_index(), 4);
   EXPECT_TRUE(set.valid());
 }
 

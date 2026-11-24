@@ -394,8 +394,10 @@ class BitmapFontSet : public IFont {
     return fonts_[idx] ? fonts_[idx]->nominal_size() : nominal_[idx];
   }
 
+  // Ignored for a size that isn't loaded (slot mode): the set keeps the
+  // nearest size its owner could load instead.
   void set_base_size_index(int base_idx) {
-    if (base_idx >= 0 && base_idx < num_fonts_) {
+    if (base_idx >= 0 && base_idx < num_fonts_ && fonts_[base_idx]) {
       base_idx_ = base_idx;
     }
   }
