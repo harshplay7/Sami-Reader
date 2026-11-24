@@ -126,9 +126,8 @@ static std::string get_font_size_label(Application* app, int idx) {
   int px = 20 + 2 * idx;
   if (app && app->font_manager() && app->font_manager()->valid()) {
     const BitmapFontSet* fonts = app->font_manager()->font_set();
-    if (fonts && idx < fonts->num_fonts())
-      if (const BitmapFont* f = fonts->get_font(idx))
-        px = f->nominal_size();
+    if (fonts && idx < fonts->num_fonts() && fonts->nominal_size_at(idx) > 0)
+      px = fonts->nominal_size_at(idx);
   }
   const int n = font_size_count(app);
   const char* hint = idx == 0 ? "  (smallest)" : idx == n - 1 ? "  (largest)" : "";

@@ -7,6 +7,7 @@
 #include "../Application.h"
 #include "../HeapLog.h"
 #include "../display/ui_font_small.h"
+#include "ListMenuScreen.h"
 
 #ifdef ESP_PLATFORM
 #include <sys/stat.h>
@@ -451,9 +452,7 @@ void ReaderScreen::resume(DrawBuffer& buf, IRuntime& runtime) {
     layout_engine_.set_hyphenation_lang(detect_language(mrb_.metadata().language));
   }
   // Check if font settings changed (font_size_idx may have been updated in options).
-  if (const BitmapFontSet* fset = ext_font_set_ ? ext_font_set_ : (font_set_.valid() ? &font_set_ : nullptr)) {
-    const_cast<BitmapFontSet*>(fset)->set_base_size_index(reader_settings_.font_size_idx);
-  }
+  apply_font_size_();
 
   // Make sure to apply settings when coming from the reader options screen
   if (chapter_src_)
@@ -685,6 +684,28 @@ void ReaderScreen::collect_page_links_() {
   }
 }
 
+const BitmapFontSet* ReaderScreen::apply_font_size_() {
+  const int idx = reader_settings_.font_size_idx;
+  if (app_ && app_->font_manager())
+    app_->font_manager()->select_size(idx);
+  if (ext_font_set_)
+    const_cast<BitmapFontSet*>(ext_font_set_)->set_base_size_index(idx);
+  if (font_set_.valid())
+    font_set_.set_base_size_index(idx);
+  return current_font_set_();
+}
+
+// Used only if no book font could be loaded. The fixed 8x8 fallback below lays
+// lines out for 16 px letters while drawing them in the narrower menu font,
+// which leaves big gaps between words; laying out with the menu font itself
+// keeps the page readable.
+const BitmapFontSet* ReaderScreen::fallback_font_set_() {
+  static BitmapFontSet set;
+  if (!set.valid())
+    set.add(&ListMenuScreen::shared_menu_font());
+  return set.valid() ? &set : nullptr;
+}
+
 void ReaderScreen::render_page_(DrawBuffer& buf) {
   const int W = buf.width();
   const int H = buf.height();
@@ -695,10 +716,9 @@ void ReaderScreen::render_page_(DrawBuffer& buf) {
 
   // Use proportional font if available, otherwise fallback to fixed.
   FixedFont fixed_font(kGlyphW * kScale, kGlyphH * kScale + 4);
-  const BitmapFontSet* fset = ext_font_set_ ? ext_font_set_ : (font_set_.valid() ? &font_set_ : nullptr);
-  if (fset) {
-    const_cast<BitmapFontSet*>(fset)->set_base_size_index(reader_settings_.font_size_idx);
-  }
+  const BitmapFontSet* fset = apply_font_size_();
+  if (!fset)
+    fset = fallback_font_set_();  // no book font loaded: use the menu font, so the text stays readable
   IFont& font = fset ? static_cast<IFont&>(const_cast<BitmapFontSet&>(*fset)) : static_cast<IFont&>(fixed_font);
   std::optional<Alignment> align_override = std::nullopt;
   if (reader_settings_.align_override != AlignOverride::Book) {
@@ -782,7 +802,7 @@ void ReaderScreen::render_page_(DrawBuffer& buf) {
   }
 
   // Track whether grayscale pass is needed (deferred to update()).
-  grayscale_pending_ = fset && fset->has_grayscale();
+  grayscale_pending_ = current_font_set_() && current_font_set_()->has_grayscale();
 
   // ── BW rendering
   // ────────────────────────────────────────────────────────
@@ -1030,7 +1050,7 @@ void ReaderScreen::render_text_(DrawBuffer& buf, const BitmapFontSet& fset, Gray
 void ReaderScreen::apply_grayscale_(DrawBuffer& buf) {
   if (buf.uc_grayscale())
     return;  // X3: no anti-aliased text (its planes mean something else); text stays plain B&W
-  const BitmapFontSet* fset = ext_font_set_ ? ext_font_set_ : (font_set_.valid() ? &font_set_ : nullptr);
+  const BitmapFontSet* fset = current_font_set_();
   if (!fset || !fset->has_grayscale())
     return;
 

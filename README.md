@@ -40,7 +40,7 @@ Both versions are built from the same code and have the same features. The X3 bu
 
 **New in Sami**
 
-- 🏠 **Cover home page** — the covers of your three most recent books with how far through each you are, plus Finished Books and the Library. Prefer a plain list? One setting switches back.
+- 🏠 **Cover home page** — the covers of your nine most recent books with how far through each you are, plus Finished Books and the Library. Prefer a plain list? One setting switches back.
 - 📊 **Reading Stats** — a month calendar of how long you read each day, which books, pages, totals, daily average and streaks.
 - 🎯 **Daily Goal** — pick a target from 10 minutes to 2 hours; days that reach it get a flag and streaks count goal days.
 - ✅ **Finished Books** — mark a book finished and it moves to its own shelf, dated, newest first.
@@ -77,7 +77,7 @@ Sami is built to feel instant on a small, slow-refreshing screen:
 
 ### 🏠 Home page, Library and Finished Books
 
-The reader starts on your **cover home page**: the three books you opened most recently, how far through each you are, and the selected book's title. **▲/▼** move, **▶** opens, **◀** goes to Settings. Books without a cover get a plain title card.
+The reader starts on your **cover home page**: the nine books you opened most recently (three rows of three), how far through each you are, and the selected book's title. **▲/▼** move, **▶** opens, **◀** goes to Settings. Books without a cover get a plain title card.
 
 The **Library** lists everything on the card, and **Settings → Book List** can show *Title*, *Title & Percent Read*, *Filename* or *Title & Author*. Finished books move off the list onto their own **Finished Books** shelf.
 

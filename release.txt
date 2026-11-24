@@ -1,4 +1,4 @@
-Build 10 - homepage options and fonts
-- New cover home page: Sami at the top, then Finished Books, the covers of the 3 books you read most recently with how far through each you are, and Library. Settings → Home Screen switches between Covers and Book List.
-- Two new built-in fonts made for small text: Literata (serif) and Atkinson Hyperlegible (sans). Settings → Font.
-- Font Size in Settings (the same setting as Font Size in the book menu).
+Build 11 - font fix and 9 recent books
+- Fixed: on the X4, books could show in a blocky font with huge gaps between words (since Build 10). The firmware had grown too big for the reader to load a whole font next to it; it now loads the text sizes it needs one at a time, so Bookerly, Alegreya, Literata and Atkinson Hyperlegible all work again. If a font ever can't load, the text is now drawn plainly instead of with gaps.
+- The cover home page shows your 9 most recent books (three rows of three) instead of 3.
+- GitHub's build now checks that the fonts fit next to the X4 firmware, so this can't slip out again.

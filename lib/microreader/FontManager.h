@@ -10,6 +10,8 @@ namespace microreader {
 // ESP32 subclasses it to override ensure_ready with partition provisioning.
 class FontManager {
  public:
+  virtual ~FontManager() = default;
+
   // Init one font slot. The data pointer must outlive this object.
   void load_font(const uint8_t* data, size_t sz) {
     if (num_fonts_ >= kMaxFontSizes)
@@ -57,6 +59,11 @@ class FontManager {
 
   // No provisioning needed on desktop.
   virtual void ensure_ready(DrawBuffer&) {}
+
+  // The reader is about to use text size `idx` as its base size. The X4 keeps
+  // only the sizes around it loaded (see platforms/esp32/font_manager.h), so
+  // it may swap sizes here. Everything else has all sizes loaded: no-op.
+  virtual void select_size(int /*idx*/) {}
 
  protected:
   BitmapFont prop_fonts_[kMaxFontSizes];

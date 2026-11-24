@@ -360,8 +360,38 @@ class BitmapFontSet : public IFont {
 
   void add(const BitmapFont* font) {
     if (num_fonts_ < kMaxFontSizes && font && font->valid()) {
+      nominal_[num_fonts_] = font->nominal_size();
       fonts_[num_fonts_++] = font;
     }
+  }
+
+  // Slot mode (X4 font partition): the set has `count` sizes, but only some
+  // of them are loaded at a time — the chip can't map a whole font next to
+  // the firmware. `nominal` gives every size's pixel size, loaded or not, so
+  // menus can still name them. Empty slots are skipped when picking a size.
+  void reset_slots(int count, const uint16_t* nominal) {
+    for (auto& f : fonts_)
+      f = nullptr;
+    num_fonts_ = count < 0 ? 0 : (count > kMaxFontSizes ? kMaxFontSizes : count);
+    for (int i = 0; i < kMaxFontSizes; ++i)
+      nominal_[i] = (nominal && i < num_fonts_) ? nominal[i] : 0;
+    base_idx_ = 0;
+  }
+
+  void set_slot(int idx, const BitmapFont* font) {
+    if (idx >= 0 && idx < num_fonts_ && font && font->valid())
+      fonts_[idx] = font;
+  }
+
+  bool has_slot(int idx) const {
+    return idx >= 0 && idx < num_fonts_ && fonts_[idx] != nullptr;
+  }
+
+  // Pixel size of size `idx`, loaded or not (0 if unknown).
+  uint16_t nominal_size_at(int idx) const {
+    if (idx < 0 || idx >= num_fonts_)
+      return 0;
+    return fonts_[idx] ? fonts_[idx]->nominal_size() : nominal_[idx];
   }
 
   void set_base_size_index(int base_idx) {
@@ -438,6 +468,7 @@ class BitmapFontSet : public IFont {
 
  private:
   const BitmapFont* fonts_[kMaxFontSizes] = {};
+  uint16_t nominal_[kMaxFontSizes] = {};
   int num_fonts_ = 0;
   int base_idx_ = 0;  // Index of 100% font
 
@@ -445,6 +476,17 @@ class BitmapFontSet : public IFont {
     if (num_fonts_ == 0)
       return nullptr;
     const BitmapFont* base_font = fonts_[base_idx_];
+    if (!base_font) {
+      // Base size not loaded (shouldn't happen once valid()): nearest loaded one.
+      for (int d = 1; d < num_fonts_ && !base_font; ++d) {
+        if (base_idx_ + d < num_fonts_ && fonts_[base_idx_ + d])
+          base_font = fonts_[base_idx_ + d];
+        else if (base_idx_ - d >= 0 && fonts_[base_idx_ - d])
+          base_font = fonts_[base_idx_ - d];
+      }
+      if (!base_font)
+        return nullptr;
+    }
     if (size_pct == 100)
       return base_font;
 
@@ -455,6 +497,8 @@ class BitmapFontSet : public IFont {
     int min_diff = 999999;
 
     for (int i = 0; i < num_fonts_; ++i) {
+      if (!fonts_[i])
+        continue;
       int h_x100 = fonts_[i]->nominal_size() * 100;
       int diff = target_height_x100 - h_x100;
       if (diff < 0)

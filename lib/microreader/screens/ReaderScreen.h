@@ -113,6 +113,18 @@ class ReaderScreen final : public IScreen {
  private:
   BitmapFontSet font_set_;                       // owned set (for single-font set_font() path)
   const BitmapFontSet* ext_font_set_ = nullptr;  // external set (from set_fonts())
+
+  // Make the chosen Font Size the base size (on the X4 this may load it), then
+  // return the font set to draw with, or nullptr if no font is usable.
+  const BitmapFontSet* apply_font_size_();
+  // The menu font as a font set, for when no book font could be loaded.
+  static const BitmapFontSet* fallback_font_set_();
+  // The font set to draw with (nullptr: none usable → fixed fallback font).
+  const BitmapFontSet* current_font_set_() const {
+    if (ext_font_set_ && ext_font_set_->valid())
+      return ext_font_set_;
+    return font_set_.valid() ? &font_set_ : nullptr;
+  }
   BitmapFont hint_font_;                         // UI font for nav-history button hints
   std::string path_;
   std::string data_dir_;

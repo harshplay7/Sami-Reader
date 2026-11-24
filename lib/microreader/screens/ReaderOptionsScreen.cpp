@@ -229,12 +229,11 @@ void ReaderOptionsScreen::on_start() {
       auto* fonts = app_->font_manager()->font_set();
       int sz = 0;
       if (fonts && settings_->font_size_idx < fonts->num_fonts()) {
-        auto* f = fonts->get_font(settings_->font_size_idx);
-        if (f) {
-          sz = f->nominal_size();
-          if (sz == 0)
+        // Not every size is loaded on the X4; nominal_size_at() knows them all.
+        sz = fonts->nominal_size_at(settings_->font_size_idx);
+        if (sz == 0)
+          if (auto* f = fonts->get_font(settings_->font_size_idx))
             sz = f->y_advance();
-        }
       }
       char val[16];
       if (sz > 0)

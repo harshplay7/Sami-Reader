@@ -85,6 +85,16 @@ jobs:
           test "$x4" -le 6553600
           test "$x3" -le 7798784
 
+      # The X4 uses its reader font straight from flash, next to the firmware,
+      # in the chip's 8 MB flash window. Build 10 grew the firmware until a
+      # whole font no longer fit there; the reader now loads a font one text
+      # size at a time. Fail if even one size can't fit any more.
+      - name: Check the X4 fonts fit next to the firmware
+        run: |
+          python tools/check_font_space.py sami-firmware.bin platforms/esp32/default_16MB.csv \
+            resources/fonts/bookerly.mfb resources/fonts/alegreya.mfb \
+            resources/fonts/literata.mfb resources/fonts/atkinson.mfb
+
       - name: Keep the files with this run
         uses: actions/upload-artifact@v4
         with:

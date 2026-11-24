@@ -35,6 +35,7 @@
 #include <functional>
 
 #include "esp_log.h"
+#include "esp_mmu_map.h"
 #include "esp_partition.h"
 #include "miniz.h"
 
@@ -474,8 +475,72 @@ struct FontPartition {
     return true;
   }
 
+  // -------------------------------------------------------------------------
+  // Piece-by-piece access (used by FontManager, see platforms/esp32/font_manager.h).
+  // The whole bundle doesn't fit in the chip's 8 MB flash window next to a
+  // big firmware, so the font manager maps one text size at a time.
+
+  // Size of the bundle stored in the partition, or 0 if there is none.
+  static uint32_t stored_size() {
+    const esp_partition_t* part = find();
+    if (!part)
+      return 0;
+    uint8_t header[kFontPartHeaderBytes];
+    if (esp_partition_read(part, 0, header, sizeof(header)) != ESP_OK || memcmp(header, kFontPartMagic, 4) != 0)
+      return 0;
+    const uint32_t font_size = header[4] | (header[5] << 8) | (header[6] << 16) | (header[7] << 24);
+    if (font_size == 0 || kFontPartHeaderSize + font_size > part->size)
+      return 0;
+    return font_size;
+  }
+
+  // Read bytes of the stored bundle (offset counts from the bundle's start).
+  static bool read(size_t offset, void* dst, size_t len) {
+    const esp_partition_t* part = find();
+    return part && esp_partition_read(part, kFontPartHeaderSize + offset, dst, len) == ESP_OK;
+  }
+
+  // 64 KB flash pages a mapping of bundle bytes [offset, offset + len) takes.
+  static uint32_t pages_for(size_t offset, size_t len) {
+    const esp_partition_t* part = find();
+    if (!part || len == 0)
+      return 0;
+    constexpr uint32_t kPage = 0x10000;
+    const uint32_t start = part->address + kFontPartHeaderSize + offset;
+    return (start + len - 1) / kPage - start / kPage + 1;
+  }
+
+  // Largest run of free 64 KB pages in the chip's flash data window.
+  static uint32_t free_pages() {
+    size_t len = 0;
+    if (esp_mmu_map_get_max_consecutive_free_block_size(
+            static_cast<mmu_mem_caps_t>(MMU_MEM_CAP_READ | MMU_MEM_CAP_8BIT), MMU_TARGET_FLASH0, &len) != ESP_OK)
+      return 0;
+    return static_cast<uint32_t>(len / 0x10000);
+  }
+
+  // Map bundle bytes [offset, offset + len). nullptr if there's no room.
+  static const uint8_t* map_range(size_t offset, size_t len, esp_partition_mmap_handle_t& handle) {
+    const esp_partition_t* part = find();
+    if (!part)
+      return nullptr;
+    const void* mapped = nullptr;
+    const esp_err_t err =
+        esp_partition_mmap(part, kFontPartHeaderSize + offset, len, ESP_PARTITION_MMAP_DATA, &mapped, &handle);
+    if (err != ESP_OK) {
+      ESP_LOGW(kFontPartTag, "map %u bytes at %u failed: %s", (unsigned)len, (unsigned)offset, esp_err_to_name(err));
+      return nullptr;
+    }
+    return static_cast<const uint8_t*>(mapped);
+  }
+
+  static void unmap(esp_partition_mmap_handle_t handle) {
+    esp_partition_munmap(handle);
+  }
+
   // Memory-map the font from the partition. Returns true if a valid font
   // was found and mapped. After success, data/size are set.
+  // (Maps the whole bundle; the font manager uses map_range() instead.)
   bool mmap() {
     const esp_partition_t* part = find();
     if (!part) {

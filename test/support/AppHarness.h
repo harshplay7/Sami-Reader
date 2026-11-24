@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "microreader/content/BookIndex.h"
 #include "microreader/Application.h"
 #include "microreader/Runtime.h"
 #include "microreader/display/DrawBuffer.h"
@@ -144,6 +145,9 @@ class AppFixture : public ::testing::Test {
   }
   void TearDown() override {
     app_.reset();
+    // The book index is a process-wide singleton: don't let this test's books
+    // show up in the next test.
+    microreader::BookIndex::instance().clear_entries();
     std::filesystem::remove_all(root_);
   }
 

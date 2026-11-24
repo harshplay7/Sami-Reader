@@ -265,40 +265,63 @@ HomeScreen::Layout HomeScreen::layout_(const DrawBuffer& buf) const {
   Layout L;
   L.header_h = kHeaderY + hf.y_advance() + kHeaderBottomGap;
 
-  // Three covers side by side, in the 2:3 shape of most book covers.
   const int margin = std::max(12, W / 26);
-  const int gap = std::max(10, W / 34);
-  L.cover_w = (W - 2 * margin - 2 * gap) / 3;
+  const int min_gap = std::max(12, W / 40);  // between covers in a row (room for the selection frames)
+  const int link_h = line + 2;
+  constexpr int kPercentGap = 4;  // cover → percent
+  constexpr int kRowGap = 6;      // percent → next row of covers
+  constexpr int kCaptionGap = 6;  // last percent row → title
+  constexpr int kEdgePad = 8;     // at least this much space under the header and above the bottom bar
+  constexpr int kMinGap = 10;     // links ↔ covers
+  const int frame_room = 2 * (kSelFrame + kSelGap);
+  const int avail = H - L.header_h - kBottomAreaH - 2 * kEdgePad;
+  // Height of everything but the covers, for a grid of `rows` rows.
+  auto other_h = [&](int rows) {
+    return 2 * link_h + 2 * kMinGap + kCaptionGap + line + frame_room + rows * (kPercentGap + line) +
+           (rows - 1) * (kRowGap + frame_room);
+  };
+
+  // Grid shape: the number of covers per row that gives the biggest covers
+  // when the page is full. It doesn't depend on how many books there are, so
+  // the covers keep their size (and their cached thumbnails) as books are added.
+  int best_cols = 3, best_w = 0;
+  for (int cols = 1; cols <= kMaxBooks; ++cols) {
+    const int rows = (kMaxBooks + cols - 1) / cols;
+    const int w_by_width = (W - 2 * margin - (cols - 1) * min_gap) / cols;
+    const int h_by_height = (avail - other_h(rows)) / rows;
+    const int w = std::min(w_by_width, h_by_height * 2 / 3);  // covers are about 2:3
+    if (w > best_w) {
+      best_w = w;
+      best_cols = cols;
+    }
+  }
+  L.cols = best_cols;
+  L.cover_w = std::max(20, best_w);
   L.cover_h = L.cover_w * 3 / 2;
 
-  const int link_h = line + 2;
-  constexpr int kPercentGap = 10;  // cover → percent
-  constexpr int kCaptionGap = 4;   // percent → title
-  const int fixed = 2 * link_h + kPercentGap + line + kCaptionGap + line;
-  constexpr int kEdgePad = 8;  // at least this much space under the header and above the bottom bar
-  const int avail = H - L.header_h - kBottomAreaH - 2 * kEdgePad;
-  constexpr int kMinGap = 16;
-  const int frame_room = 2 * (kSelFrame + kSelGap);
-  const int max_cover_h = avail - fixed - 2 * kMinGap - frame_room;
-  if (L.cover_h > max_cover_h) {  // landscape: limited by height
-    L.cover_h = std::max(30, max_cover_h);
-    L.cover_w = L.cover_h * 2 / 3;
-  }
+  // Covers in a row are spread out a little, but not too far apart.
+  const int spare = W - 2 * margin - L.cols * L.cover_w;
+  const int gap = L.cols > 1 ? std::clamp(spare / (L.cols - 1), min_gap, std::max(min_gap, L.cover_w / 3)) : 0;
 
   const int n = std::max(1, static_cast<int>(books_.size()));
-  const int total_w = n * L.cover_w + (n - 1) * gap;
-  for (int i = 0; i < kMaxBooks; ++i)
-    L.slot_x[i] = (W - total_w) / 2 + i * (L.cover_w + gap);
-
-  const int content = fixed + L.cover_h + frame_room;
+  const int rows = (n + L.cols - 1) / L.cols;
+  const int content = other_h(rows) - 2 * kMinGap + rows * L.cover_h;
   const int vgap = std::max(kMinGap, std::min(48, (avail - content) / 4));
   const int block = content + 2 * vgap;
   const int top = L.header_h + kEdgePad + std::max(0, (avail - block) / 2);
 
   L.finished_y = top;
   L.covers_y = L.finished_y + link_h + vgap + kSelFrame + kSelGap;
-  L.percent_y = L.covers_y + L.cover_h + kPercentGap;
-  L.caption_y = L.percent_y + line + kCaptionGap;
+  const int row_step = L.cover_h + kPercentGap + line + kRowGap + frame_room;
+  for (int i = 0; i < kMaxBooks; ++i) {
+    const int row = i / L.cols;
+    const int in_row = std::min(L.cols, n - row * L.cols);  // a short last row is centred
+    const int row_w = std::max(1, in_row) * L.cover_w + (std::max(1, in_row) - 1) * gap;
+    L.slot_x[i] = (W - row_w) / 2 + (i % L.cols) * (L.cover_w + gap);
+    L.slot_y[i] = L.covers_y + row * row_step;
+    L.percent_y[i] = L.slot_y[i] + L.cover_h + kPercentGap;
+  }
+  L.caption_y = L.covers_y + (rows - 1) * row_step + L.cover_h + kPercentGap + line + kCaptionGap;
   L.library_y = L.caption_y + line + vgap + kSelFrame + kSelGap;
   return L;
 }
@@ -378,17 +401,18 @@ void HomeScreen::draw_cover_(DrawBuffer& buf, const Layout& L, int slot) const {
   const BitmapFont& f = ListMenuScreen::shared_menu_font();
   const BitmapFont& small = ListMenuScreen::shared_font(UiFont::Small);
   const int x = L.slot_x[slot];
+  const int y = L.slot_y[slot];
   const int cx = x + L.cover_w / 2;
-  const int bottom = L.covers_y + L.cover_h;
+  const int bottom = y + L.cover_h;
 
-  int rect[4] = {x, L.covers_y, L.cover_w, L.cover_h};
+  int rect[4] = {x, y, L.cover_w, L.cover_h};
   const std::string thumb = app_ ? thumb_path(app_->data_dir_, b.path, L.cover_w, L.cover_h) : std::string();
   if (!thumb.empty() && draw_thumb(buf, thumb, cx, bottom, L.cover_w, L.cover_h, rect)) {
     frame(buf, rect[0] - 1, rect[1] - 1, rect[2] + 2, rect[3] + 2, 1);
   } else {
     // No cover: an outlined card with the title written in it.
-    frame(buf, x, L.covers_y, L.cover_w, L.cover_h, 1);
-    const int pad = 8;
+    frame(buf, x, y, L.cover_w, L.cover_h, 1);
+    const int pad = L.cover_w < 90 ? 4 : 8;
     const int max_w = L.cover_w - 2 * pad;
     const int line = small.y_advance();
     const int max_lines = std::max(1, (L.cover_h - 2 * pad) / line);
@@ -416,11 +440,11 @@ void HomeScreen::draw_cover_(DrawBuffer& buf, const Layout& L, int slot) const {
     if (pos < t.size() && !lines.empty())
       lines.back() += " ...";
     const int text_h = static_cast<int>(lines.size()) * line;
-    int y = L.covers_y + (L.cover_h - text_h) / 2;
+    int ty = y + (L.cover_h - text_h) / 2;
     for (const std::string& ln : lines) {
       const std::string shown = fit_text(small, ln, max_w);
-      text_at(buf, small, cx - text_w(small, shown) / 2, y, shown);
-      y += line;
+      text_at(buf, small, cx - text_w(small, shown) / 2, ty, shown);
+      ty += line;
     }
   }
 
@@ -435,7 +459,7 @@ void HomeScreen::draw_cover_(DrawBuffer& buf, const Layout& L, int slot) const {
     std::snprintf(pct, sizeof(pct), "%d%%", std::min(100, b.percent));
   else
     std::snprintf(pct, sizeof(pct), "New");
-  text_at(buf, f, cx - text_w(f, pct) / 2, L.percent_y, pct);
+  text_at(buf, f, cx - text_w(f, pct) / 2, L.percent_y[slot], pct);
 }
 
 void HomeScreen::draw_(DrawBuffer& buf, std::optional<uint8_t> battery_pct) const {

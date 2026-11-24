@@ -131,6 +131,7 @@ add_executable(unit_tests
     unit/LaidOutParagraphTest.cpp
     unit/PageLayoutTest.cpp
     unit/BitmapFontTest.cpp
+    unit/FontWindowTest.cpp
     unit/MrbFormatTest.cpp
     unit/MrbLayoutComparisonTest.cpp
     unit/StreamingPipelineTest.cpp
@@ -170,6 +171,7 @@ add_executable(microreader_tests
     unit/LaidOutParagraphTest.cpp
     unit/PageLayoutTest.cpp
     unit/BitmapFontTest.cpp
+    unit/FontWindowTest.cpp
     unit/MrbFormatTest.cpp
     unit/MrbLayoutComparisonTest.cpp
     unit/StreamingPipelineTest.cpp

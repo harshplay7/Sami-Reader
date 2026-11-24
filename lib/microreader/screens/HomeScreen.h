@@ -19,21 +19,26 @@ namespace microreader {
 //
 //     [cover]   [cover]   [cover]
 //       42%       10%       88%
+//     [cover]   [cover]   [cover]
+//       New       67%        5%
+//     [cover]   [cover]   [cover]
+//       12%       90%       33%
 //        Title of the selected book
 //
 //              Library
 //
-// The three covers are the books opened most recently (finished books are
-// left out). ▲/▼ move through the row: Finished Books, the covers, Library;
-// ▶ opens the selection, ◀ opens Settings. The cursor starts on the first
-// cover.
+// The covers are the (up to) nine books opened most recently, newest first,
+// in rows of three (more per row when the screen is wider than tall);
+// finished books are left out. ▲/▼ step through Finished Books, the covers
+// in reading order, then Library; ▶ opens the selection, ◀ opens Settings.
+// The cursor starts on the first cover.
 //
 // Covers are decoded once per book and screen size and kept as small 1-bit
 // thumbnails in <data_dir>/cache/<book>/thumb-<w>x<h>.bin, so the page draws
 // quickly afterwards.
 class HomeScreen final : public IScreen {
  public:
-  static constexpr int kMaxBooks = 3;
+  static constexpr int kMaxBooks = 9;
 
   const char* name() const override {
     return "Home";
@@ -68,13 +73,15 @@ class HomeScreen final : public IScreen {
   struct Layout {
     int header_h = 0;
     int finished_y = 0;  // top of the Finished Books link
-    int covers_y = 0;    // top of the cover row
-    int cover_w = 0;
-    int cover_h = 0;
-    int slot_x[kMaxBooks] = {};
-    int percent_y = 0;  // top of the percent row
-    int caption_y = 0;  // top of the selected book's title
-    int library_y = 0;  // top of the Library link
+    int covers_y = 0;    // top of the first row of covers
+    int cover_w = 0;     // every cover's box (the same for any number of books,
+    int cover_h = 0;     // so the cached thumbnails stay valid)
+    int cols = 0;        // covers per row
+    int slot_x[kMaxBooks] = {};     // left of each cover's box
+    int slot_y[kMaxBooks] = {};     // top of each cover's box
+    int percent_y[kMaxBooks] = {};  // top of the percentage under each cover
+    int caption_y = 0;              // top of the selected book's title
+    int library_y = 0;              // top of the Library link
   };
 
   std::vector<RecentBook> books_;

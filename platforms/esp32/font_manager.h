@@ -7,14 +7,21 @@
 #include "font_partition.h"
 #include "microreader/Application.h"
 #include "microreader/FontManager.h"
+#include "microreader/FontWindow.h"
 
 // ESP32 font manager: extends the core FontManager with spiffs partition
 // provisioning.  Declare as `static FontManager font_mgr(app)` in app_main
 // to keep objects in BSS (not on the stack).
 //
-// Font bundles live in the appended asset blob (see asset_blob.h) so they
-// don't consume DROM at boot.  We mmap on demand only during provisioning
-// (~5 s, once per firmware update), then unmap so the MMU pages are free.
+// Font bundles live in the asset blob (see asset_blob.h). The chosen one is
+// unpacked into the font partition (~15 s, once per font or firmware update).
+//
+// A font in the partition is used straight from flash, which takes room in the
+// chip's 8 MB flash window next to the firmware. A whole font (all seven sizes,
+// up to 2.8 MB) no longer fits beside a 5.5 MB firmware, so it is mapped one
+// size at a time: the Font Size in use first, then the sizes headings use, for
+// as long as there is room (see microreader/FontWindow.h). Changing the Font
+// Size swaps the loaded sizes (select_size()).
 class FontManager : public microreader::FontManager {
  public:
   explicit FontManager(microreader::Application& app) : app_(app) {}
@@ -74,6 +81,7 @@ class FontManager : public microreader::FontManager {
       ESP_LOGE("font", "built-in font %s missing from firmware", asset);
       return false;
     }
+    release_();
     load_fonts_from_(data, size);  // assets live in flash for the whole run; no unmap
     if (!font_set_.valid()) {
       ESP_LOGE("font", "built-in font %s did not load", asset);
@@ -112,12 +120,9 @@ class FontManager : public microreader::FontManager {
       if (use_builtin_x3_("bookerly.fnt"))
         app_.set_reader_font(font_set());
     };
-    if (custom_font == installed_font && font_part_.mmap()) {
-      load_fonts_();
-      if (font_set_.valid()) {
-        app_.set_reader_font(font_set());
-        return;
-      }
+    if (custom_font == installed_font && ((part_num_ > 0 && font_set_.valid()) || load_fonts_())) {
+      app_.set_reader_font(font_set());
+      return;
     }
     if (!is_valid_font_file(custom_font.c_str())) {
       ESP_LOGE("font", "SD card font rejected (invalid header): %s", custom_font.c_str());
@@ -132,24 +137,26 @@ class FontManager : public microreader::FontManager {
     buf.sync_bw_ram();
     buf.show_loading("Installing fonts...", 0);
     ESP_LOGI("font", "Provisioning font from SD card: %s", custom_font.c_str());
+    if (builtin_loaded_ == nullptr) {
+      // The font in use lives in the partition that is about to be rewritten.
+      release_();
+      app_.set_reader_font(nullptr);
+    }
     const bool ok = FontPartition::provision_uncompressed_file(
         custom_font.c_str(), buf.scratch_buf2(), microreader::DrawBuffer::kBufSize,
         [&buf](int pct) { buf.show_loading("Installing fonts...", pct); });
     buf.reset_after_scratch();
-    if (ok && font_part_.mmap()) {
-      load_fonts_();
-      if (font_set_.valid()) {
-        app_.set_installed_font_path(custom_font);
-        app_.set_reader_font(font_set());
-        return;
-      }
+    if (ok && load_fonts_()) {
+      app_.set_installed_font_path(custom_font);
+      app_.set_reader_font(font_set());
+      return;
     }
     ESP_LOGE("font", "SD card font install failed: %s", custom_font.c_str());
     fall_back("Font install failed!");
   }
 #else
   void init() {
-    if (font_part_.mmap()) {
+    if (FontPartition::stored_size() > 0) {
       load_fonts_();
       if (font_set_.valid()) {
         for (int i = 0; i < microreader::kMaxFontSizes; i++) {
@@ -183,7 +190,7 @@ class FontManager : public microreader::FontManager {
     uint32_t target_crc = is_embedded ? asset_blob::g_assets.crc(target_asset) : 0;
 
     if (custom_font == installed_font && (!is_embedded || !FontPartition::needs_provisioning(target_crc))) {
-      if (font_set_.valid()) {
+      if (font_set_.valid() || load_fonts_()) {
         app_.set_reader_font(font_set());
         return;
       }
@@ -226,6 +233,9 @@ class FontManager : public microreader::FontManager {
         ESP_LOGE("font", "failed to map asset %s", target_asset);
         return;
       }
+      // The partition is about to be rewritten: let go of the font mapped from it.
+      release_();
+      app_.set_reader_font(nullptr);
       bool ok = FontPartition::provision_embedded(
           data, mapped_size, target_crc, buf.scratch_buf1(), microreader::DrawBuffer::kBufSize, buf.scratch_buf2(),
           microreader::DrawBuffer::kBufSize, [&buf](int pct) { buf.show_loading("Installing fonts...", pct); });
@@ -234,35 +244,32 @@ class FontManager : public microreader::FontManager {
       if (ok) {
         app_.set_installed_font_path(custom_font);
         buf.reset_after_scratch();
-        if (font_part_.mmap()) {
-          load_fonts_();
-          app_.set_reader_font(font_set());
-        }
+        load_fonts_();
+      } else {
+        ESP_LOGE("font", "provisioning %s failed", target_asset);
       }
+      app_.set_reader_font(font_set());  // nullptr if nothing loaded: the reader falls back to the menu font
     } else {
       ESP_LOGI("font", "Provisioning font from SD card: %s", custom_font.c_str());
+      release_();
+      app_.set_reader_font(nullptr);
       bool prov_ok = FontPartition::provision_uncompressed_file(
           custom_font.c_str(), buf.scratch_buf2(), microreader::DrawBuffer::kBufSize,
           [&buf](int pct) { buf.show_loading("Installing fonts...", pct); });
       buf.reset_after_scratch();
       if (prov_ok) {
-        if (font_part_.mmap()) {
-          load_fonts_();
-          if (font_set_.valid()) {
-            app_.set_installed_font_path(custom_font);
-            app_.set_reader_font(font_set());
-          } else {
-            ESP_LOGE("font", "SD card font loaded but produced no valid Normal style");
-            app_.set_custom_font_path(installed_font);
-          }
+        if (load_fonts_()) {
+          app_.set_installed_font_path(custom_font);
+        } else {
+          ESP_LOGE("font", "SD card font loaded but produced no valid Normal style");
+          app_.set_custom_font_path(installed_font);
         }
       } else {
         ESP_LOGE("font", "SD card font provisioning failed: %s", custom_font.c_str());
         buf.show_loading("Font install failed!", 0);
         app_.set_custom_font_path(installed_font);
-        if (font_set_.valid())
-          app_.set_reader_font(font_set());
       }
+      app_.set_reader_font(font_set());
     }
   }
 
@@ -270,21 +277,157 @@ class FontManager : public microreader::FontManager {
 
   // Call in the main loop when g_font_uploaded is true (serial upload).
   void on_serial_upload() {
-    if (font_part_.mmap()) {
-      load_fonts_();
-      if (font_set_.valid()) {
-        ESP_LOGI("font", "re-loaded fonts after upload");
-        app_.set_reader_font(font_set());
-      }
+    if (load_fonts_()) {
+      ESP_LOGI("font", "re-loaded fonts after upload");
+      app_.set_reader_font(font_set());
     }
   }
 
+  // The reader is about to use text size `idx`: load the sizes around it.
+  void select_size(int idx) override {
+    if (part_num_ == 0 || idx < 0 || idx >= part_num_ || idx == part_base_)
+      return;
+    load_window_(idx);
+  }
+
  private:
-  void load_fonts_() {
-    load_fonts_from_(font_part_.data, font_part_.size);
+  // Free pages kept for whatever else maps flash while a book is open (the
+  // firmware check when switching app slots works through it in pieces).
+  static constexpr uint32_t kReservePages = 6;
+
+  struct Slot {
+    uint32_t offset = 0;  // from the bundle's start
+    uint32_t size = 0;
+    uint16_t nominal = 0;  // pixel size
+    esp_partition_mmap_handle_t handle = 0;
+    bool mapped = false;
+  };
+
+  // Unmap every size of the partition's font and empty the font set.
+  void unmap_slots_() {
+    for (int i = 0; i < microreader::kMaxFontSizes; ++i) {
+      if (slots_[i].mapped) {
+        FontPartition::unmap(slots_[i].handle);
+        slots_[i].mapped = false;
+      }
+      prop_fonts_[i] = microreader::BitmapFont();
+    }
+    font_set_ = microreader::BitmapFontSet();
+    num_fonts_ = 0;
+  }
+
+  // Let go of whatever font is loaded.
+  void release_() {
+    unmap_slots_();
+    part_num_ = 0;
+  }
+
+  // Load the font stored in the partition (its table of sizes, then the sizes
+  // around the current base size). True if it can be used.
+  bool load_fonts_() {
+    release_();
 #ifdef MICROREADER_X3
     builtin_loaded_ = nullptr;  // now showing the partition's font
 #endif
+    const uint32_t total = FontPartition::stored_size();
+    if (total < 40) {
+      ESP_LOGW("font", "no font in the partition");
+      return false;
+    }
+    uint8_t hdr[40];
+    if (!FontPartition::read(0, hdr, sizeof(hdr)) || memcmp(hdr, "FNTS", 4) != 0 || hdr[5] != 2) {
+      ESP_LOGE("font", "Invalid font partition (expected FNTS v2 bundle, got version %u)", hdr[5]);
+      return false;
+    }
+    int num = hdr[4];
+    if (num > microreader::kMaxFontSizes)
+      num = microreader::kMaxFontSizes;
+    char font_name[33] = {};
+    memcpy(font_name, hdr + 8, 32);
+    uint8_t table[4 * microreader::kMaxFontSizes];
+    if (num <= 0 || !FontPartition::read(40, table, 4 * num))
+      return false;
+
+    uint32_t off = 40 + 4 * static_cast<uint32_t>(num);
+    int usable = 0;
+    for (int i = 0; i < num; ++i) {
+      const uint8_t* p = table + 4 * i;
+      const uint32_t sz = p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
+      if (off + sz > total || sz < sizeof(microreader::MbfHeader))
+        break;
+      uint8_t nom[2] = {};
+      FontPartition::read(off + 14, nom, 2);  // MbfHeader::nominal_size
+      slots_[i] = Slot{};
+      slots_[i].offset = off;
+      slots_[i].size = sz;
+      slots_[i].nominal = static_cast<uint16_t>(nom[0] | (nom[1] << 8));
+      off += sz;
+      ++usable;
+    }
+    ESP_LOGI("font", "Bundle font: \"%s\" (%d sizes)", font_name, usable);
+    part_num_ = usable;
+    if (part_num_ == 0)
+      return false;
+    if (part_base_ < 0 || part_base_ >= part_num_)
+      part_base_ = part_num_ / 2;
+    return load_window_(part_base_);
+  }
+
+  // Map the sizes around `base`, most useful first, while there's room.
+  bool load_window_(int base) {
+    unmap_slots_();
+    uint16_t nominal[microreader::kMaxFontSizes] = {};
+    for (int i = 0; i < part_num_; ++i)
+      nominal[i] = slots_[i].nominal;
+    font_set_.reset_slots(part_num_, nominal);
+    num_fonts_ = part_num_;
+    part_base_ = base;
+
+    int order[microreader::kMaxFontSizes];
+    const int n = microreader::font_window_order(nominal, part_num_, base, order);
+    int loaded = 0;
+    for (int k = 0; k < n; ++k) {
+      const int i = order[k];
+      Slot& s = slots_[i];
+      const uint32_t need = FontPartition::pages_for(s.offset, s.size);
+      const uint32_t free_now = FontPartition::free_pages();
+      if (i != base && free_now < need + kReservePages)
+        continue;  // no room; a smaller size later in the list may still fit
+      const uint8_t* data = FontPartition::map_range(s.offset, s.size, s.handle);
+      if (!data)
+        continue;
+      s.mapped = true;
+      prop_fonts_[i].init(data, s.size);
+      if (!prop_fonts_[i].valid()) {
+        FontPartition::unmap(s.handle);
+        s.mapped = false;
+        prop_fonts_[i] = microreader::BitmapFont();
+        continue;
+      }
+      font_set_.set_slot(i, &prop_fonts_[i]);
+      ++loaded;
+    }
+
+    if (font_set_.has_slot(base)) {
+      font_set_.set_base_size_index(base);
+    } else {
+      // The chosen size didn't fit: use the nearest one that did.
+      for (int d = 1; d < part_num_; ++d) {
+        if (font_set_.has_slot(base - d)) {
+          font_set_.set_base_size_index(base - d);
+          break;
+        }
+        if (font_set_.has_slot(base + d)) {
+          font_set_.set_base_size_index(base + d);
+          break;
+        }
+      }
+      ESP_LOGE("font", "size %d (%u px) didn't fit in flash; using the nearest size that did", base,
+               (unsigned)slots_[base].nominal);
+    }
+    ESP_LOGI("font", "loaded %d of %d sizes around %u px; %u free pages left", loaded, part_num_,
+             (unsigned)slots_[base].nominal, (unsigned)FontPartition::free_pages());
+    return font_set_.valid();
   }
 
   void load_fonts_from_(const uint8_t* d, size_t sz) {
@@ -328,7 +471,9 @@ class FontManager : public microreader::FontManager {
   }
 
   microreader::Application& app_;
-  FontPartition font_part_;
+  Slot slots_[microreader::kMaxFontSizes];
+  int part_num_ = 0;   // sizes of the partition's font (0: the font in use isn't from the partition)
+  int part_base_ = 1;  // base size the loaded sizes were chosen around (Font Size default: 22 px)
 #ifdef MICROREADER_X3
   const char* builtin_loaded_ = nullptr;  // asset name of the built-in font in use, if any
 #endif

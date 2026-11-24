@@ -91,7 +91,7 @@ TEST_F(HomeScreenTest, StartsOnTheHomePageWithLibrarySelectedWhenNothingWasRead)
   EXPECT_EQ(home().selected(), library_row());
 }
 
-TEST_F(HomeScreenTest, RecentBooksNewestFirstUpToThreeWithFirstSelected) {
+TEST_F(HomeScreenTest, RecentBooksNewestFirstWithFirstSelected) {
   start_app();
   read_from_library("basic.epub");
   EXPECT_EQ(home().book_count(), 1);
@@ -100,7 +100,7 @@ TEST_F(HomeScreenTest, RecentBooksNewestFirstUpToThreeWithFirstSelected) {
   read_from_library("with_cover.epub");
   read_from_library("with_cover_epub3.epub");
   read_from_library("multi_chapter.epub");
-  EXPECT_EQ(home().book_count(), HomeScreen::kMaxBooks);
+  EXPECT_EQ(home().book_count(), 4) << "up to nine recent books are shown";
   EXPECT_EQ(home().selected(), 1);
 
   // ▶ on the second cover opens that book; afterwards it's the first cover.
@@ -116,6 +116,34 @@ TEST_F(HomeScreenTest, RecentBooksNewestFirstUpToThreeWithFirstSelected) {
   tap(Button::Button1);
   ASSERT_EQ(top(), "Reader");
   EXPECT_EQ(app_->reader()->get_path(), opened);
+}
+
+TEST_F(HomeScreenTest, ShowsTheNineMostRecentBooks) {
+  const std::vector<std::string> names = {"basic.epub",       "with_cover.epub",   "with_cover_epub3.epub",
+                                          "multi_chapter.epub", "long_title.epub",   "multilingual.epub",
+                                          "nested_dirs.epub", "special_chars.epub", "stored.epub",
+                                          "with_css.epub"};
+  use_books(names);
+  start_app();
+  for (const auto& n : names)
+    read_from_library(n);
+  ASSERT_EQ(HomeScreen::kMaxBooks, 9);
+  EXPECT_EQ(home().book_count(), 9) << "ten books read: the oldest one drops off";
+  EXPECT_EQ(library_row(), 10);
+
+  // ▼ steps through all nine covers, then Library; ▶ on the ninth opens the
+  // second book that was read (the first one dropped off).
+  for (int i = 0; i < 8; ++i)
+    tap(Button::Button2);
+  ASSERT_EQ(home().selected(), 9);
+  tap(Button::Button1);
+  ASSERT_EQ(top(), "Reader");
+  EXPECT_EQ(app_->reader()->get_path(), book_path("with_cover.epub"));
+  tap(Button::Button0);
+  ASSERT_EQ(top(), "Home");
+  tap(Button::Button3);  // ▲ from the first cover: Finished Books
+  tap(Button::Button3);  // ▲ again wraps to Library
+  EXPECT_EQ(home().selected(), library_row());
 }
 
 TEST_F(HomeScreenTest, CoversAreCachedAsThumbnails) {
